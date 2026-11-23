@@ -1,8 +1,4 @@
-FROM python:3.12-slim
 
-# Set environment variables for Python
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -10,67 +6,39 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Install system dependencies as root
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-        gcc python3-dev libssl-dev curl && \
+        gcc \
+        python3-dev \
+        libssl-dev \
+        curl && \
     rm -rf /var/lib/apt/lists/*
 
+# Upgrade Python packaging tools
 RUN python -m pip install --no-cache-dir --upgrade \
     pip "setuptools>=78.1.1" wheel
 
-RUN groupadd -r appgroup && \
-    useradd -r -g appgroup appuser
-
+# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
 COPY . .
 
-RUN chown -R appuser:appgroup /app
+# Create non-root user and set permissions
+RUN groupadd -r appgroup && \
+    useradd -r -g appgroup appuser && \
+    chown -R appuser:appgroup /app
 
 USER appuser
 
+# Application health check
 HEALTHCHECK --interval=30s --timeout=30s \
     --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD python -m app.database_init && \
-    uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && \
-    apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends gcc python3-dev libssl-dev curl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Upgrade pip and essential Python tools
-RUN python -m pip install --upgrade pip setuptools>=70.0.0 wheel
-
-# Create non-root user
-RUN groupadd -r appgroup && \
-    useradd -r -g appgroup appuser
-
-# Copy dependencies and install them
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application code
-COPY . .
-
-# Ensure correct ownership
-RUN chown -R appuser:appgroup /app
-
-# Switch to non-root user
-USER appuser
-
-# Health check for the service
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run database initialization before starting the app
-CMD python -m app.database_init && \
-    uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
+# Initialize database and start FastAPI
+CMD ["sh", "-c", "python -m app.database_init && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4"]
