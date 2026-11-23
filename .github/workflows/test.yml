@@ -1,106 +1,129 @@
-name: CI/CD
+
+name: Module 13 CI/CD
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
     runs-on: ubuntu-latest
+
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:17
         env:
-          POSTGRES_USER: user
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: mytestdb  # <-- Dedicated test DB name
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fastapi_test_db
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d fastapi_test_db"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fastapi_test_db
+      JWT_SECRET_KEY: ${{ secrets.CI_JWT_SECRET_KEY }}
+      JWT_REFRESH_SECRET_KEY: ${{ secrets.CI_JWT_REFRESH_SECRET_KEY }}
+      PYTHONPATH: .
+
     steps:
-      - uses: actions/checkout@v3
-      
-      - uses: actions/setup-python@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          
-      - uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-      
-      - name: Install dependencies
-        env:
-          DATABASE_URL: postgresql://user:password@localhost:5432/mytestdb
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
         run: |
-          python -m venv venv
-          source venv/bin/activate
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install  # if you use Playwright for e2e tests
-      
-      - name: Run tests
-        env:
-          DATABASE_URL: postgresql://user:password@localhost:5432/mytestdb
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run unit tests
+        run: python -m pytest tests/unit/ --no-cov
+
+      - name: Run integration tests
+        run: python -m pytest tests/integration/ --no-cov
+
+      - name: Initialize database and start FastAPI
         run: |
-          source venv/bin/activate
-          
-          # 1) Unit tests
-          pytest tests/unit/ --cov=src --junitxml=test-results/junit.xml
-          
-          # 2) Integration tests
-          pytest tests/integration/
-          
-          # 3) E2E or other tests
-          pytest tests/e2e/
+          python -m app.database_init
+          nohup uvicorn app.main:app \
+            --host 127.0.0.1 \
+            --port 8000 > /tmp/fastapi.log 2>&1 &
+
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          cat /tmp/fastapi.log
+          exit 1
+
+      - name: Run Playwright authentication tests
+        run: |
+          python -m pytest tests/e2e/test_auth_playwright.py \
+            --no-cov --preserve-db
+
+      - name: Run remaining E2E tests
+        run: |
+          python -m pytest tests/e2e/test_fastapi_calculator.py \
+            --no-cov --preserve-db
 
   security:
     needs: test
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Build image
-        run: docker build -t app:test .
-      
-      - name: Run Trivy vulnerability scanner
+
+      - name: Build Docker image
+        run: docker build -t module13:test .
+
+      - name: Scan Docker image
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'app:test'
-          format: 'table'
-          exit-code: '1'
+          image-ref: module13:test
+          format: table
+          exit-code: "1"
           ignore-unfixed: true
-          severity: 'CRITICAL,HIGH'
-  
+          severity: CRITICAL,HIGH
+
   deploy:
     needs: security
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: production
+
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: docker/setup-buildx-action@v3
-      
-      - uses: docker/login-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          
-      - uses: docker/build-push-action@v5
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
         with:
+          context: .
           push: true
           tags: |
-            kaw393939/601_module9:latest
-            kaw393939/601_module9:${{ github.sha }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=registry,ref=kaw393939/601_module9:cache
-          cache-to: type=inline,mode=max
+            navidislam/module13_is601:latest
+            navidislam/module13_is601:${{ github.sha }}
