@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Install system dependencies as root
+# Install required system dependencies
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
@@ -16,19 +16,37 @@ RUN apt-get update && \
         curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Upgrade Python packaging tools
-RUN python -m pip install --no-cache-dir --upgrade \
-    pip "setuptools>=78.1.1" wheel
-
-# Install Python dependencies
+# Copy Python requirements
 COPY requirements.txt .
 
-RUN python -m pip install --no-cache-dir -r requirements.txt
+# Install dependencies and upgrade packaging tools
+RUN python -m pip install --no-cache-dir --upgrade pip && \
+    python -m pip install --no-cache-dir -r requirements.txt && \
+    python -m pip install --no-cache-dir --upgrade \
+        "setuptools>=78.1.1" wheel && \
+    python -m pip check
+
+# Verify setuptools version and remove obsolete metadata
+RUN python - <<'PY'
+import importlib.metadata as metadata
+from pathlib import Path
+
+version = metadata.version("setuptools")
+print(f"Installed setuptools version: {version}")
+
+site_packages = Path(metadata.distribution("setuptools").locate_file(""))
+
+for path in site_packages.glob("setuptools-*.dist-info"):
+    if path.name != f"setuptools-{version}.dist-info":
+        print(f"Removing obsolete metadata: {path}")
+        import shutil
+        shutil.rmtree(path)
+PY
 
 # Copy application files
 COPY . .
 
-# Create non-root user and set permissions
+# Create non-root user
 RUN groupadd -r appgroup && \
     useradd -r -g appgroup appuser && \
     chown -R appuser:appgroup /app
