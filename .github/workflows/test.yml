@@ -59,19 +59,51 @@ jobs:
       - name: Initialize database and start FastAPI
         run: |
           python -m app.database_init
+
           nohup uvicorn app.main:app \
             --host 127.0.0.1 \
             --port 8000 > /tmp/fastapi.log 2>&1 &
 
           for i in {1..30}; do
             if curl --fail --silent http://127.0.0.1:8000/health; then
+              echo "FastAPI server is ready."
               exit 0
             fi
             sleep 2
           done
 
+          echo "FastAPI failed to start."
           cat /tmp/fastapi.log
           exit 1
+
+      - name: Diagnose registration page
+        run: |
+          echo "Checking registration endpoint..."
+          curl --fail --show-error --silent \
+            --dump-header /tmp/register-headers.txt \
+            --output /tmp/register-page.html \
+            http://127.0.0.1:8000/register
+
+          echo "Response headers:"
+          cat /tmp/register-headers.txt
+
+          echo "Registration page title:"
+          grep -n '<title>' /tmp/register-page.html || true
+
+          echo "Checking username input..."
+          if grep -n 'id="username"' /tmp/register-page.html; then
+            echo "Username field found successfully."
+          else
+            echo "ERROR: Username field missing."
+            echo "First 100 lines of registration response:"
+            head -100 /tmp/register-page.html
+            echo "FastAPI logs:"
+            cat /tmp/fastapi.log
+            exit 1
+          fi
+
+          echo "FastAPI logs:"
+          cat /tmp/fastapi.log
 
       - name: Run Playwright authentication tests
         run: |
@@ -83,12 +115,20 @@ jobs:
           python -m pytest tests/e2e/test_fastapi_calculator.py \
             --no-cov --preserve-db
 
+      - name: Show FastAPI logs if tests fail
+        if: failure()
+        run: |
+          if [ -f /tmp/fastapi.log ]; then
+            cat /tmp/fastapi.log
+          fi
+
   security:
     needs: test
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Build Docker image
         run: docker build -t module13:test .
@@ -108,7 +148,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
