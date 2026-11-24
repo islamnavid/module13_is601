@@ -1,0 +1,41 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test coverage and reports
+.coverage
+.coverage.*
+htmlcov/
+test-results/
+playwright-report/
+
+# Git
+.git/
+.gitignore
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and macOS files
+.vscode/
+.idea/
+.DS_Store
+
+# Local databases and logs
+*.db
+*.sqlite3
+*.log
+
+# Docker Compose override
+docker-compose.override.yml
