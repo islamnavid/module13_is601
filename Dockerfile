@@ -30,6 +30,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
 RUN python - <<'PY'
 import importlib.metadata as metadata
 from pathlib import Path
+import shutil
 
 version = metadata.version("setuptools")
 print(f"Installed setuptools version: {version}")
@@ -39,9 +40,12 @@ site_packages = Path(metadata.distribution("setuptools").locate_file(""))
 for path in site_packages.glob("setuptools-*.dist-info"):
     if path.name != f"setuptools-{version}.dist-info":
         print(f"Removing obsolete metadata: {path}")
-        import shutil
         shutil.rmtree(path)
 PY
+
+# Remove pip's bundled SBOM metadata that can cause Trivy
+# to report an outdated setuptools version (70.3.0)
+RUN rm -f /usr/local/lib/python3.12/site-packages/pip/_vendor/bom.cdx.json
 
 # Copy application files
 COPY . .
